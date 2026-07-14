@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Veritas — Grounded Fact-Checking</title>
+  <style>
+    :root {
+      --bg: #0b1020; --panel: #141b30; --border: #243049;
+      --text: #e2e8f0; --muted: #94a3b8; --accent: #38bdf8;
+      --green: #22c55e; --red: #ef4444; --amber: #f59e0b; --grey: #94a3b8; --blue: #60a5fa;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; background: var(--bg); color: var(--text);
+      font-family: -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+      display: flex; justify-content: center; padding: 24px;
+    }
+    .wrap { width: 100%; max-width: 720px; }
+    h1 { font-size: 42px; font-weight: 800; letter-spacing: -1.5px; margin: 0; }
+    .sub { color: var(--muted); margin: 4px 0 20px; }
+    textarea {
+      width: 100%; min-height: 130px; resize: vertical; background: var(--panel);
+      border: 1px solid var(--border); border-radius: 16px; color: var(--text);
+      padding: 16px; font-size: 16px; font-family: inherit;
+    }
+    button {
+      margin-top: 12px; width: 100%; background: var(--accent); color: var(--bg);
+      border: 0; border-radius: 14px; padding: 15px; font-size: 17px; font-weight: 700;
+      cursor: pointer;
+    }
+    button:disabled { opacity: .6; cursor: default; }
+    .error { color: #f87171; margin-top: 14px; }
+    .scorebox { text-align: center; margin: 26px 0 6px; }
+    .score { font-size: 68px; font-weight: 800; line-height: 1; }
+    .score small { font-size: 22px; color: #475569; font-weight: 600; }
+    .summary { color: #cbd5e1; margin-top: 6px; font-size: 14px; }
+    .card {
+      background: var(--panel); border: 1px solid var(--border); border-radius: 16px;
+      padding: 16px; margin-top: 14px;
+    }
+    .chead { display: flex; justify-content: space-between; align-items: center; }
+    .badge {
+      font-size: 12px; font-weight: 700; padding: 4px 10px; border-radius: 999px;
+      border: 1px solid currentColor;
+    }
+    .conf { color: #64748b; font-size: 13px; font-weight: 600; }
+    .claim { font-size: 16px; font-weight: 600; margin: 10px 0 6px; }
+    .expl { color: var(--muted); font-size: 14px; line-height: 1.5; }
+    .cite { display: block; color: var(--accent); font-size: 13px; margin-top: 8px;
+            text-decoration: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .hint { color: #64748b; text-align: center; margin-top: 28px; }
+    .SUPPORTED { color: var(--green); } .DISPUTED { color: var(--red); }
+    .MISLEADING { color: var(--amber); } .UNSUPPORTED { color: var(--grey); }
+    .OPINION { color: var(--blue); }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>🛡️ Veritas</h1>
+    <p class="sub">Grounded fact-checking, powered by the Gemini API</p>
+
+    <textarea id="input" placeholder="Paste an article, tweet, or claim to fact-check…">The Great Wall of China is the only man-made object visible from space with the naked eye. Honey never spoils. Vaccines cause autism.</textarea>
+    <button id="go" onclick="analyze()">Check the facts</button>
+
+    <div id="out"></div>
+  </div>
+
+  <script>
+    // When served by FastAPI (http/https) a relative URL works; if this file is
+    // opened directly from disk (file://) fall back to the local backend.
+    const API_BASE = location.origin && location.origin.startsWith("http")
+      ? "" : "http://localhost:8000";
+
+    const LABELS = {
+      SUPPORTED: "Supported", DISPUTED: "Disputed", MISLEADING: "Misleading",
+      UNSUPPORTED: "Unsupported", OPINION: "Opinion"
+    };
+    function scoreColor(s) {
+      return s >= 75 ? "var(--green)" : s >= 45 ? "var(--amber)" : "var(--red)";
+    }
+    function esc(t) {
+      return (t || "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+    }
+    async function analyze() {
+      const btn = document.getElementById("go");
+      const out = document.getElementById("out");
+      const text = document.getElementById("input").value.trim();
+      if (!text) return;
+      btn.disabled = true; btn.textContent = "Checking…";
+      out.innerHTML = '<p class="hint">Analyzing claims and grounding each one…</p>';
+      try {
+        const res = await fetch(API_BASE + "/analyze", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text })
+        });
+        if (!res.ok) {
+          const d = await res.json().catch(() => ({}));
+          throw new Error(d.detail || ("Server error " + res.status));
+        }
+        render(await res.json());
+      } catch (e) {
+        out.innerHTML = '<p class="error">⚠️ ' + esc(e.message) + "</p>";
+      } finally {
+        btn.disabled = false; btn.textContent = "Check the facts";
+      }
+    }
+    function render(r) {
+      let html = '<div class="scorebox"><div class="score" style="color:' + scoreColor(r.credibility_score) +
+        '">' + r.credibility_score + '<small>/100</small></div>' +
+        '<div class="summary">' + esc(r.summary) + '</div></div>';
+      for (const c of r.results) {
+        const v = c.verdict;
+        html += '<div class="card"><div class="chead">' +
+          '<span class="badge ' + v + '">' + (LABELS[v] || v) + '</span>' +
+          '<span class="conf">' + Math.round(c.confidence * 100) + '%</span></div>' +
+          '<div class="claim">' + esc(c.claim) + '</div>' +
+          '<div class="expl">' + esc(c.explanation) + '</div>';
+        for (const cit of (c.citations || []).slice(0, 3)) {
+          html += '<a class="cite" href="' + esc(cit.uri) + '" target="_blank" rel="noopener">🔗 ' +
+            esc(cit.title || cit.uri) + '</a>';
+        }
+        html += '</div>';
+      }
+      document.getElementById("out").innerHTML = html;
+    }
+  </script>
+</body>
+</html>
